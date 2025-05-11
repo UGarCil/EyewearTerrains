@@ -3,6 +3,10 @@ A Python library designed to read, process, and analyze Bruker/Veeco Scanning Pr
 
 ![3D visualization](./Figures/0.png "Optional title")
 
+## YOUTUBE TUTORIAL
+
+[![installing bvspm](./Figures/tutorial.png)](https://youtu.be/99y9O1ZNkIY)
+
 ## Installation
 
 There are two recommended ways to install the BVSPM library:
