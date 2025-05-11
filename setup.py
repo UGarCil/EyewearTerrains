@@ -10,8 +10,7 @@ setup(
         "scikit-image",
         "scipy",
     ],
-    # Optional but recommended fields
-    description="Brief description of your bvspm package",
+    description="An integration of Matplotlib to handle Bruker/Veeco spm data files.",
     author="Uriel Garcilazo Cruz",
     author_email="garcilazo.uriel@gmail.com",
     url="https://github.com/UGarCil/EyewearTerrains",
@@ -20,5 +19,5 @@ setup(
         "License :: OSI Approved :: MIT License",  # Adjust license as needed
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.10",  # Specify minimum Python version
+    python_requires=">=3.9",  # Specify minimum Python version
 )

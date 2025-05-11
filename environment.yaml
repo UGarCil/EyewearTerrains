@@ -1,0 +1,13 @@
+name: bvspm-env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - numpy
+  - matplotlib
+  - scikit-image
+  - scipy
+  - pip
+  - pip:
+    - -e .  # install in development mode. Remove if not needed.
