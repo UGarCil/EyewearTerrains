@@ -1,0 +1,11 @@
+{
+  "Scan Size": "500 500 nm",
+  "Samps/line": "256",
+  "Lines": "256",
+  "Z sensitivity": "V 43.19258 nm/V",
+  "Z scale": "N/A",
+  "Original min height (nm)": -7.016612851367599,
+  "Original max height (nm)": 6.653370056739881,
+  "Original mean height (nm)": -0.2129669189453125,
+  "Sa roughness (nm)": 1.0512484821266923
+}
