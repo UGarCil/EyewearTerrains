@@ -1,6 +1,0 @@
-README.md
-setup.py
-bvspm.egg-info/PKG-INFO
-bvspm.egg-info/SOURCES.txt
-bvspm.egg-info/dependency_links.txt
-bvspm.egg-info/top_level.txt
