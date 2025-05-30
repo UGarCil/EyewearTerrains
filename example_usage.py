@@ -5,7 +5,7 @@ import numpy as np
 from bvspm.utils import process_and_visualize_spm, save_raw_tiff, calculate_sa
 
 # path to your image file
-path_file = "./images/test.spm"
+path_file = r"D:\Garcilazo\Python\00Exercises\CHEMAI_projects\00_Norah\AFM\PolyCarb_10um.0_00008.spm"
 # Get the heighmap image and metadata from the BVspm file
 heightmap, metadata = process_and_visualize_spm(path_file)
 

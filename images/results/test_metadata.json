@@ -1,0 +1,72 @@
+{
+  "original_metadata": {
+    "Scan Size": "500 500 nm",
+    "Samps/line": "256",
+    "Lines": "256",
+    "Z sensitivity": "V 43.19258 nm/V",
+    "Z scale": "N/A"
+  },
+  "basic_statistics": {
+    "Original min height (nm)": -7.016612851367599,
+    "Original max height (nm)": 6.653370056739881,
+    "Original mean height (nm)": -0.2129669189453125,
+    "Sa roughness (nm)": 1.8598149195313454,
+    "Ra roughness (nm)": 1.862806499004364
+  },
+  "error_analysis_sa": {
+    "calculation_type": "Sa",
+    "mean": -0.2129669189453125,
+    "std": 3.153305799337886,
+    "variance": 9.943337464137946,
+    "std_error": 0.012317600778663618,
+    "confidence_interval": [
+      -0.2371094187346786,
+      -0.1888244191559464
+    ],
+    "confidence_level": 0.95,
+    "coefficient_variation": -1480.6552186387312,
+    "skewness": -0.08441180155318777,
+    "kurtosis": 4.79621355968253,
+    "sample_size": 65536,
+    "min_value": -20.0,
+    "max_value": 22.0,
+    "range": 42.0,
+    "percentile_25": -1.0,
+    "percentile_75": 0.0,
+    "iqr": 1.0,
+    "roughness_value": 1.8598149195313454,
+    "roughness_std": 2.5464432351065103,
+    "roughness_uncertainty": 0.012317600778663618
+  },
+  "error_analysis_ra": {
+    "calculation_type": "Ra",
+    "mean": -0.2129669189453125,
+    "std": 3.153305799337886,
+    "variance": 9.943337464137946,
+    "std_error": 0.012317600778663618,
+    "confidence_interval": [
+      -0.2371094187346786,
+      -0.1888244191559464
+    ],
+    "confidence_level": 0.95,
+    "coefficient_variation": -1480.6552186387312,
+    "skewness": -0.08441180155318777,
+    "kurtosis": 4.79621355968253,
+    "sample_size": 65536,
+    "min_value": -20.0,
+    "max_value": 22.0,
+    "range": 42.0,
+    "percentile_25": -1.0,
+    "percentile_75": 0.0,
+    "iqr": 1.0,
+    "roughness_value": 1.862806499004364,
+    "roughness_std": 1.007029393578999,
+    "roughness_uncertainty": 0.04450483206586792
+  },
+  "files_generated": {
+    "tiff_file": "test_raw.tif",
+    "main_plot": "test_heightmap.png",
+    "error_analysis_plot": "test_error_analysis.png",
+    "confidence_intervals_plot": "test_confidence_intervals.png"
+  }
+}

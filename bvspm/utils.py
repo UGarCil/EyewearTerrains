@@ -3,8 +3,276 @@ import struct
 import re
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
+import os
+from scipy import stats
+from scipy.ndimage import gaussian_filter
+from scipy.interpolate import griddata
+import seaborn as sns
 
-def save_raw_tiff(heightmap, file_path, metadata=None):
+def create_results_directory(base_filename):
+    """Create a results directory for output files."""
+    results_dir = os.path.join(os.path.dirname(base_filename), "results")
+    os.makedirs(results_dir, exist_ok=True)
+    return results_dir
+
+def evaluating_error_stats(heightmap, calculation_type="Sa", confidence_level=0.95):
+    """
+    Calculate comprehensive error statistics and uncertainty measures for surface roughness data.
+    
+    Args:
+        heightmap: 2D numpy array of height values
+        calculation_type: "Sa" or "Ra" to specify the type of calculation
+        confidence_level: Confidence level for confidence intervals (default 0.95)
+    
+    Returns:
+        dict: Dictionary containing various statistical measures
+    """
+    # Clean the data
+    heightmap_clean = heightmap[~np.isnan(heightmap)]
+    
+    if len(heightmap_clean) == 0:
+        return {
+            'mean': 0.0, 'std': 0.0, 'variance': 0.0, 'std_error': 0.0,
+            'confidence_interval': (0.0, 0.0), 'coefficient_variation': 0.0,
+            'skewness': 0.0, 'kurtosis': 0.0, 'sample_size': 0,
+            'min_value': 0.0, 'max_value': 0.0, 'range': 0.0,
+            'percentile_25': 0.0, 'percentile_75': 0.0, 'iqr': 0.0
+        }
+    
+    # Basic statistics
+    mean_val = np.mean(heightmap_clean)
+    std_val = np.std(heightmap_clean, ddof=1)  # Sample standard deviation
+    variance = np.var(heightmap_clean, ddof=1)  # Sample variance
+    sample_size = len(heightmap_clean)
+    std_error = std_val / np.sqrt(sample_size)  # Standard error of the mean
+    
+    # Confidence interval for the mean
+    alpha = 1 - confidence_level
+    dof = sample_size - 1
+    t_critical = stats.t.ppf(1 - alpha/2, dof)
+    margin_error = t_critical * std_error
+    ci_lower = mean_val - margin_error
+    ci_upper = mean_val + margin_error
+    
+    # Additional statistics
+    coefficient_variation = (std_val / mean_val) * 100 if mean_val != 0 else np.inf
+    skewness = stats.skew(heightmap_clean)
+    kurt = stats.kurtosis(heightmap_clean)
+    
+    # Range and percentiles
+    min_val = np.min(heightmap_clean)
+    max_val = np.max(heightmap_clean)
+    range_val = max_val - min_val
+    percentile_25 = np.percentile(heightmap_clean, 25)
+    percentile_75 = np.percentile(heightmap_clean, 75)
+    iqr = percentile_75 - percentile_25
+    
+    # Calculate roughness-specific statistics
+    if calculation_type.lower() == "sa":
+        # For Sa: deviation from mean
+        deviations = np.abs(heightmap_clean - mean_val)
+        roughness_val = np.mean(deviations)
+        roughness_std = np.std(deviations, ddof=1)
+    elif calculation_type.lower() == "ra":
+        # For Ra: calculate profile-wise and then aggregate
+        ra_values = []
+        # Calculate Ra for each row
+        for row in range(heightmap.shape[0]):
+            profile = heightmap[row, :]
+            profile_clean = profile[~np.isnan(profile)]
+            if len(profile_clean) > 0:
+                profile_mean = np.mean(profile_clean)
+                ra_row = np.mean(np.abs(profile_clean - profile_mean))
+                ra_values.append(ra_row)
+        
+        # Calculate Ra for each column
+        for col in range(heightmap.shape[1]):
+            profile = heightmap[:, col]
+            profile_clean = profile[~np.isnan(profile)]
+            if len(profile_clean) > 0:
+                profile_mean = np.mean(profile_clean)
+                ra_col = np.mean(np.abs(profile_clean - profile_mean))
+                ra_values.append(ra_col)
+        
+        if ra_values:
+            roughness_val = np.mean(ra_values)
+            roughness_std = np.std(ra_values, ddof=1) if len(ra_values) > 1 else 0.0
+        else:
+            roughness_val = 0.0
+            roughness_std = 0.0
+    
+    return {
+        'calculation_type': calculation_type,
+        'mean': float(mean_val),
+        'std': float(std_val),
+        'variance': float(variance),
+        'std_error': float(std_error),
+        'confidence_interval': (float(ci_lower), float(ci_upper)),
+        'confidence_level': confidence_level,
+        'coefficient_variation': float(coefficient_variation),
+        'skewness': float(skewness),
+        'kurtosis': float(kurt),
+        'sample_size': int(sample_size),
+        'min_value': float(min_val),
+        'max_value': float(max_val),
+        'range': float(range_val),
+        'percentile_25': float(percentile_25),
+        'percentile_75': float(percentile_75),
+        'iqr': float(iqr),
+        'roughness_value': float(roughness_val),
+        'roughness_std': float(roughness_std),
+        'roughness_uncertainty': float(roughness_std / np.sqrt(len(ra_values)) if calculation_type.lower() == "ra" and ra_values else std_error)
+    }
+
+def plot_error_statistics(heightmap, error_stats_sa, error_stats_ra, output_dir, base_filename):
+    """
+    Create comprehensive plots for error analysis and statistical visualization.
+    
+    Args:
+        heightmap: 2D numpy array of height values
+        error_stats_sa: Dictionary from evaluating_error_stats() for Sa
+        error_stats_ra: Dictionary from evaluating_error_stats() for Ra
+        output_dir: Directory to save plots
+        base_filename: Base filename for saving plots
+    """
+    # Clean data for plotting
+    heightmap_clean = heightmap[~np.isnan(heightmap)]
+    
+    # Create a comprehensive figure with multiple subplots
+    fig = plt.figure(figsize=(16, 12))
+    
+    # 1. Height distribution histogram
+    ax1 = plt.subplot(2, 3, 1)
+    n, bins, patches = ax1.hist(heightmap_clean, bins=50, density=True, alpha=0.7, color='skyblue', edgecolor='black')
+    ax1.axvline(error_stats_sa['mean'], color='red', linestyle='--', linewidth=2, label=f"Mean: {error_stats_sa['mean']:.3f} nm")
+    ax1.axvline(error_stats_sa['mean'] + error_stats_sa['std'], color='orange', linestyle='--', alpha=0.8, label=f"+1σ: {error_stats_sa['std']:.3f} nm")
+    ax1.axvline(error_stats_sa['mean'] - error_stats_sa['std'], color='orange', linestyle='--', alpha=0.8, label=f"-1σ")
+    ax1.set_xlabel('Height (nm)')
+    ax1.set_ylabel('Density')
+    ax1.set_title('Height Distribution')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # 2. Box plot for quartile analysis
+    ax2 = plt.subplot(2, 3, 2)
+    box_data = [heightmap_clean]
+    bp = ax2.boxplot(box_data, patch_artist=True, labels=['Height Data'])
+    bp['boxes'][0].set_facecolor('lightblue')
+    ax2.set_ylabel('Height (nm)')
+    ax2.set_title('Height Data Distribution\n(Quartiles & Outliers)')
+    ax2.grid(True, alpha=0.3)
+    
+    # Add statistics text
+    stats_text = f"Q1: {error_stats_sa['percentile_25']:.3f} nm\nMedian: {np.median(heightmap_clean):.3f} nm\nQ3: {error_stats_sa['percentile_75']:.3f} nm\nIQR: {error_stats_sa['iqr']:.3f} nm"
+    ax2.text(1.1, np.median(heightmap_clean), stats_text, fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+    
+    # 3. Roughness comparison with error bars
+    ax3 = plt.subplot(2, 3, 3)
+    roughness_types = ['Sa', 'Ra']
+    roughness_values = [error_stats_sa['roughness_value'], error_stats_ra['roughness_value']]
+    roughness_errors = [error_stats_sa['roughness_uncertainty'], error_stats_ra['roughness_uncertainty']]
+    
+    bars = ax3.bar(roughness_types, roughness_values, yerr=roughness_errors, capsize=10, 
+                   color=['lightcoral', 'lightgreen'], alpha=0.8, edgecolor='black')
+    ax3.set_ylabel('Roughness (nm)')
+    ax3.set_title('Surface Roughness Comparison\n(with Uncertainty)')
+    ax3.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels on bars
+    for i, (bar, val, err) in enumerate(zip(bars, roughness_values, roughness_errors)):
+        ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + err + 0.001,
+                f'{val:.3f} ± {err:.3f}', ha='center', va='bottom', fontweight='bold')
+    
+    # 4. Q-Q plot for normality assessment
+    ax4 = plt.subplot(2, 3, 4)
+    stats.probplot(heightmap_clean, dist="norm", plot=ax4)
+    ax4.set_title('Q-Q Plot (Normality Test)')
+    ax4.grid(True, alpha=0.3)
+    
+    # 5. 2D heightmap with statistical overlay
+    ax5 = plt.subplot(2, 3, 5)
+    im = ax5.imshow(heightmap, cmap='viridis', interpolation='none')
+    plt.colorbar(im, ax=ax5, label='Height (nm)')
+    ax5.set_title('2D Height Map')
+    ax5.set_xlabel('X (pixels)')
+    ax5.set_ylabel('Y (pixels)')
+    
+    # 6. Statistical summary table
+    ax6 = plt.subplot(2, 3, 6)
+    ax6.axis('off')
+    
+    # Create statistical summary
+    summary_data = [
+        ['Statistic', 'Sa Analysis', 'Ra Analysis'],
+        ['Mean (nm)', f"{error_stats_sa['mean']:.4f}", f"{error_stats_ra['mean']:.4f}"],
+        ['Std Dev (nm)', f"{error_stats_sa['std']:.4f}", f"{error_stats_ra['std']:.4f}"],
+        ['Std Error (nm)', f"{error_stats_sa['std_error']:.4f}", f"{error_stats_ra['std_error']:.4f}"],
+        ['CV (%)', f"{error_stats_sa['coefficient_variation']:.2f}", f"{error_stats_ra['coefficient_variation']:.2f}"],
+        ['Skewness', f"{error_stats_sa['skewness']:.4f}", f"{error_stats_ra['skewness']:.4f}"],
+        ['Kurtosis', f"{error_stats_sa['kurtosis']:.4f}", f"{error_stats_ra['kurtosis']:.4f}"],
+        ['Roughness (nm)', f"{error_stats_sa['roughness_value']:.4f}", f"{error_stats_ra['roughness_value']:.4f}"],
+        ['Uncertainty (nm)', f"{error_stats_sa['roughness_uncertainty']:.4f}", f"{error_stats_ra['roughness_uncertainty']:.4f}"],
+    ]
+    
+    table = ax6.table(cellText=summary_data[1:], colLabels=summary_data[0],
+                      cellLoc='center', loc='center', bbox=[0, 0, 1, 1])
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1, 1.5)
+    
+    # Style the table
+    for i in range(len(summary_data[0])):
+        table[(0, i)].set_facecolor('#4CAF50')
+        table[(0, i)].set_text_props(weight='bold', color='white')
+    
+    ax6.set_title('Statistical Summary', pad=20, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    # Save the comprehensive plot
+    plot_filename = os.path.join(output_dir, f"{os.path.basename(base_filename)}_error_analysis.png")
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    print(f"Error analysis plot saved: {plot_filename}")
+    
+    plt.show()
+    
+    # Create a separate confidence interval plot
+    fig2, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot confidence intervals for both Sa and Ra
+    metrics = ['Sa', 'Ra']
+    values = [error_stats_sa['roughness_value'], error_stats_ra['roughness_value']]
+    ci_sa = error_stats_sa['confidence_interval']
+    ci_ra = error_stats_ra['confidence_interval']
+    
+    # For roughness confidence intervals, we'll use the roughness uncertainty
+    ci_lower = [val - stats['roughness_uncertainty']*1.96 for val, stats in zip(values, [error_stats_sa, error_stats_ra])]
+    ci_upper = [val + stats['roughness_uncertainty']*1.96 for val, stats in zip(values, [error_stats_sa, error_stats_ra])]
+    
+    x_pos = np.arange(len(metrics))
+    ax.errorbar(x_pos, values, yerr=[np.array(values) - np.array(ci_lower), 
+                                     np.array(ci_upper) - np.array(values)], 
+                fmt='o', capsize=10, capthick=2, markersize=10, linewidth=2)
+    
+    ax.set_xlabel('Roughness Metric')
+    ax.set_ylabel('Roughness Value (nm)')
+    ax.set_title(f'Roughness Measurements with {error_stats_sa["confidence_level"]*100}% Confidence Intervals')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(metrics)
+    ax.grid(True, alpha=0.3)
+    
+    # Add value labels
+    for i, (val, lower, upper) in enumerate(zip(values, ci_lower, ci_upper)):
+        ax.text(i, upper + 0.01, f'{val:.3f}\n[{lower:.3f}, {upper:.3f}]', 
+                ha='center', va='bottom', fontweight='bold')
+    
+    ci_plot_filename = os.path.join(output_dir, f"{os.path.basename(base_filename)}_confidence_intervals.png")
+    plt.savefig(ci_plot_filename, dpi=300, bbox_inches='tight')
+    print(f"Confidence interval plot saved: {ci_plot_filename}")
+    
+    plt.show()
+
+def save_raw_tiff(heightmap, file_path, metadata=None, output_dir=None):
     """
     Save the raw heightmap data as a TIFF file with metadata.
     
@@ -12,23 +280,23 @@ def save_raw_tiff(heightmap, file_path, metadata=None):
         heightmap: Numpy array containing the height data
         file_path: Original SPM file path, used to create output filename
         metadata: Dictionary of metadata (optional)
+        output_dir: Directory to save files (if None, uses same directory as input)
     
     Returns:
         Path to the saved TIFF file
     """
-    import os
     from skimage import io
-    import numpy as np
     
-    # Create output filename for TIFF (replacing .spm with _raw.tif)
-    base_filename = os.path.splitext(file_path)[0]
-    tif_filename = f"{base_filename}_raw.tif"
+    # Create output filename for TIFF
+    base_filename = os.path.splitext(os.path.basename(file_path))[0]
+    if output_dir is None:
+        output_dir = os.path.dirname(file_path)
+    
+    tif_filename = os.path.join(output_dir, f"{base_filename}_raw.tif")
     print(f"Saving raw heightmap data as: {tif_filename}")
     
     # Normalize the data for proper TIFF visualization (0-65535 for 16-bit depth)
-    # This preserves the relative height differences
     heightmap_norm = heightmap.copy()
-    # Handle NaN values
     heightmap_norm = np.nan_to_num(heightmap_norm)
     
     # Normalize to full 16-bit range
@@ -36,7 +304,7 @@ def save_raw_tiff(heightmap, file_path, metadata=None):
     max_val = np.max(heightmap_norm)
     range_val = max_val - min_val
     
-    if range_val > 0:  # Avoid division by zero
+    if range_val > 0:
         heightmap_norm = ((heightmap_norm - min_val) / range_val * 65535).astype(np.uint16)
     else:
         heightmap_norm = np.zeros_like(heightmap_norm, dtype=np.uint16)
@@ -44,31 +312,7 @@ def save_raw_tiff(heightmap, file_path, metadata=None):
     # Save as TIFF
     io.imsave(tif_filename, heightmap_norm)
     
-    # Save metadata to a companion JSON file if provided
-    if metadata:
-        import json
-        meta_filename = f"{base_filename}_metadata.json"
-        
-        # Select essential metadata to save
-        essential_metadata = {
-            "Scan Size": metadata.get("Scan Size", "N/A"),
-            "Samps/line": metadata.get("Samps/line", "N/A"),
-            "Lines": metadata.get("Lines", "N/A"),
-            "Z sensitivity": metadata.get("@Sens. Zsens", "N/A"),
-            "Z scale": metadata.get("@2:Z scale", "N/A"),
-            "Original min height (nm)": float(np.min(heightmap)),
-            "Original max height (nm)": float(np.max(heightmap)),
-            "Original mean height (nm)": float(np.mean(heightmap)),
-            "Sa roughness (nm)": float(calculate_sa(heightmap))
-        }
-        
-        with open(meta_filename, 'w') as f:
-            json.dump(essential_metadata, f, indent=2)
-        
-        print(f"Saved metadata to: {meta_filename}")
-    
     return tif_filename
-
 
 def parse_spm_header(file_path):
     """Parse the ASCII header of an SPM file and extract relevant metadata."""
@@ -108,17 +352,13 @@ def get_calibration_factors(metadata):
             if match:
                 z_scale = float(match.group(1))
             else:
-                # Try alternative format that might be present in the metadata
                 match = re.search(r"([\d.e-]+)\s*V/LSB", metadata[key])
                 if match:
                     z_scale = float(match.group(1))
     
-    # If the above method didn't work, try to extract full scale data
     if z_scale is None and z_scale_line is not None:
-        # Try to extract the floating point number directly
         numbers = re.findall(r"([\d.e-]+)", z_scale_line)
         if numbers and len(numbers) > 0:
-            # The first number is typically the scale
             try:
                 z_scale = float(numbers[0])
             except ValueError:
@@ -132,7 +372,6 @@ def get_calibration_factors(metadata):
             if match:
                 z_offset = float(match.group(1))
             else:
-                # Alternative format extraction
                 numbers = re.findall(r"([-\d.e-]+)", metadata[key])
                 if numbers and len(numbers) > 0:
                     try:
@@ -158,12 +397,11 @@ def read_binary_data_with_different_formats(file_path, data_offset, samps_line, 
     with open(file_path, 'rb') as f:
         f.seek(data_offset)
         
-        # Try different data formats
         formats_to_try = [
-            ('int16', np.dtype('<i2')),  # Little-endian 16-bit int
-            ('float32', np.dtype('<f4')), # Little-endian 32-bit float
-            ('int32', np.dtype('<i4')),   # Little-endian 32-bit int
-            ('uint16', np.dtype('<u2')),  # Little-endian 16-bit unsigned int
+            ('int16', np.dtype('<i2')),
+            ('float32', np.dtype('<f4')),
+            ('int32', np.dtype('<i4')),
+            ('uint16', np.dtype('<u2')),
         ]
         
         best_heightmap = None
@@ -176,15 +414,13 @@ def read_binary_data_with_different_formats(file_path, data_offset, samps_line, 
                 binary_data = f.read(data_size)
                 
                 if len(binary_data) < data_size:
-                    continue  # Not enough data for this format
+                    continue
                 
                 heightmap = np.frombuffer(binary_data, dtype=dtype).reshape(num_lines, samps_line)
                 
-                # Check if data looks reasonable (not all zeros or NaNs)
                 if np.all(heightmap == 0) or np.isnan(heightmap).any():
                     continue
                 
-                # This is our candidate
                 best_heightmap = heightmap.copy()
                 best_format = format_name
                 break
@@ -197,7 +433,6 @@ def read_binary_data_with_different_formats(file_path, data_offset, samps_line, 
             print(f"Successfully read data with format: {best_format}")
             return best_heightmap
         else:
-            # Fallback to the original method
             f.seek(data_offset)
             return np.fromfile(f, dtype='<f4', count=samps_line*num_lines).reshape(num_lines, samps_line)
 
@@ -208,17 +443,13 @@ def read_calibrated_spm(file_path):
     """
     metadata = parse_spm_header(file_path)
     
-    # Get image dimensions from metadata
     samps_line = int(metadata.get("Samps/line", 256))
     num_lines = int(metadata.get("Lines", 256))
     
-    # Get calibration factors (with z_magnify)
     z_sens, z_scale, z_offset, z_magnify = get_calibration_factors(metadata)
     
-    # Print calibration factors for debugging
     print(f"Calibration factors: z_sens={z_sens} nm/V, z_scale={z_scale} V/LSB, z_offset={z_offset} V, z_magnify={z_magnify}")
     
-    # Check for data offset from metadata if available
     data_offset = None
     if "Data offset" in metadata:
         try:
@@ -227,7 +458,6 @@ def read_calibrated_spm(file_path):
         except (ValueError, TypeError):
             pass
     
-    # If not found in metadata, locate it in the file
     if data_offset is None:
         with open(file_path, 'rb') as f:
             while True:
@@ -236,7 +466,7 @@ def read_calibrated_spm(file_path):
                 if b"*File list end" in line:
                     data_offset = f.tell()
                     break
-                if pos > 100000:  # Safety check
+                if pos > 100000:
                     raise ValueError("Could not find binary data offset")
     
         if data_offset is None:
@@ -244,8 +474,7 @@ def read_calibrated_spm(file_path):
     
     print(f"Binary data starts at offset: {data_offset}")
     
-    # Determine data type from metadata
-    bytes_per_pixel = 4  # Default to 4 bytes (32-bit float)
+    bytes_per_pixel = 4
     if "Bytes/pixel" in metadata:
         try:
             bytes_per_pixel = int(metadata["Bytes/pixel"])
@@ -253,109 +482,109 @@ def read_calibrated_spm(file_path):
         except (ValueError, TypeError):
             pass
     
-    # Read binary data with format appropriate for bytes_per_pixel
     if bytes_per_pixel == 4:
-        dtype = np.dtype('<f4')  # 32-bit float
+        dtype = np.dtype('<f4')
     elif bytes_per_pixel == 2:
-        dtype = np.dtype('<i2')  # 16-bit int
+        dtype = np.dtype('<i2')
     else:
-        # If unusual format, try different formats
         heightmap = read_binary_data_with_different_formats(file_path, data_offset, samps_line, num_lines)
         dtype = None
     
-    # If dtype was determined, read data directly
     if dtype is not None:
         with open(file_path, 'rb') as f:
             f.seek(data_offset)
             heightmap = np.fromfile(f, dtype=dtype, count=samps_line*num_lines).reshape(num_lines, samps_line)
     
-    # Apply calibration if we have all factors
     if all(v is not None for v in [z_sens, z_scale]):
-        # Convert from digital units to volts
         heightmap_volts = heightmap * z_scale
-        # Apply Z magnify factor if present
         heightmap_volts = heightmap_volts * z_magnify
-        # Convert from volts to nanometers using sensitivity
         heightmap_nm = heightmap_volts * z_sens
-        # Apply offset
         if z_offset is not None:
             heightmap_nm = heightmap_nm + (z_offset * z_sens)
     else:
-        # Fallback to raw data with a generic scaling if calibration not available
         print("Warning: Could not find complete calibration data, using generic scaling")
-        # Apply a generic scaling to make the data visible
-        heightmap_nm = heightmap * 1.0  # Use raw values but with float type
+        heightmap_nm = heightmap * 1.0
     
-    # Handle any NaN or inf values
     heightmap_nm = np.nan_to_num(heightmap_nm, nan=0.0, posinf=0.0, neginf=0.0)
     
     return heightmap_nm, metadata
 
 def calculate_sa(heightmap):
     """Calculate average roughness (Sa) from heightmap."""
-    # Remove any potential NaN values before calculation
     heightmap_clean = heightmap[~np.isnan(heightmap)]
     
     if len(heightmap_clean) == 0:
-        return 0.0  # Return 0 if all values are NaN
+        return 0.0
     
     mean_val = np.mean(heightmap_clean)
     Sa = np.mean(np.abs(heightmap_clean - mean_val))
     return Sa
 
+def calculate_ra(heightmap):
+    """Calculate average roughness (Ra) from heightmap."""
+    if np.any(np.isnan(heightmap)):
+        mask = ~np.isnan(heightmap)
+        if not np.any(mask):
+            return 0.0
+        
+        heightmap_clean = heightmap.copy()
+        mean_val = np.mean(heightmap[mask])
+        heightmap_clean[~mask] = mean_val
+    else:
+        heightmap_clean = heightmap
+    
+    ra_rows = []
+    for row in range(heightmap_clean.shape[0]):
+        profile = heightmap_clean[row, :]
+        mean_profile = np.mean(profile)
+        ra_row = np.mean(np.abs(profile - mean_profile))
+        ra_rows.append(ra_row)
+    
+    ra_cols = []
+    for col in range(heightmap_clean.shape[1]):
+        profile = heightmap_clean[:, col]
+        mean_profile = np.mean(profile)
+        ra_col = np.mean(np.abs(profile - mean_profile))
+        ra_cols.append(ra_col)
+    
+    ra_all = np.mean(ra_rows + ra_cols)
+    return ra_all
+
 def process_and_visualize_spm(file_path):
-    """Process and visualize SPM file with proper calibration."""
+    """Process and visualize SPM file with proper calibration and comprehensive error analysis."""
     try:
         heightmap, metadata = read_calibrated_spm(file_path)
         
-        # Ensure heightmap has no NaN values for visualization
+        # Create results directory
+        base_filename = os.path.splitext(file_path)[0]
+        results_dir = create_results_directory(base_filename)
+        
         heightmap = np.nan_to_num(heightmap)
         
-        # Calculate statistics
+        # Calculate basic roughness values
         Sa = calculate_sa(heightmap)
+        Ra = calculate_ra(heightmap)
         
-        print("=== Surface Roughness Analysis ===")
+        # Calculate comprehensive error statistics
+        print("=== Calculating Error Statistics ===")
+        error_stats_sa = evaluating_error_stats(heightmap, "Sa")
+        error_stats_ra = evaluating_error_stats(heightmap, "Ra")
+        
+        print("=== Surface Roughness Analysis with Uncertainty ===")
         print(f"Min height: {np.min(heightmap):.3f} nm")
         print(f"Max height: {np.max(heightmap):.3f} nm")
-        print(f"Mean height: {np.mean(heightmap):.3f} nm")
-        print(f"Sa roughness: {Sa:.3f} nm")
+        print(f"Mean height: {np.mean(heightmap):.3f} nm ± {error_stats_sa['std_error']:.3f} nm")
+        print(f"Sa roughness: {Sa:.3f} nm ± {error_stats_sa['roughness_uncertainty']:.3f} nm")
+        print(f"Ra roughness: {Ra:.3f} nm ± {error_stats_ra['roughness_uncertainty']:.3f} nm")
+        print(f"Coefficient of Variation (Sa): {error_stats_sa['coefficient_variation']:.2f}%")
+        print(f"Coefficient of Variation (Ra): {error_stats_ra['coefficient_variation']:.2f}%")
         
-        # Get scan size from metadata for plot labels
+        # Generate error statistics plots
+        plot_error_statistics(heightmap, error_stats_sa, error_stats_ra, results_dir, base_filename)
+        
+        # Get scan size from metadata
         scan_size = metadata.get("Scan Size", "N/A")
-        
-        # Add preprocessing to fix the dots issue:
-        # Check if the image seems to have isolated dots (may be due to specific data format)
-        unique_values = np.unique(heightmap)
-        if len(unique_values) < 1000 or np.count_nonzero(heightmap) < 0.1 * heightmap.size:
-            print("Detected sparse/dotted data, applying preprocessing...")
-            
-            # Option 1: Apply Gaussian filter to connect the dots (if they're actually signal points)
-            from scipy.ndimage import gaussian_filter
-            heightmap = gaussian_filter(heightmap, sigma=1.0)
-            
-            # Option 2: If there are many zeros with some non-zero points, try interpolation
-            if np.count_nonzero(heightmap == 0) > 0.8 * heightmap.size:
-                print("Applying interpolation to sparse data...")
-                # Create a mask of valid (non-zero) points
-                mask = heightmap != 0
-                # Get coordinates of valid points
-                coords = np.array(np.nonzero(mask)).T
-                # Get values of valid points
-                values = heightmap[mask]
-                
-                # Create grid for interpolation
-                from scipy.interpolate import griddata
-                xi, yi = np.mgrid[0:heightmap.shape[0], 0:heightmap.shape[1]]
-                # Interpolate
-                heightmap = griddata(coords, values, (xi, yi), method='cubic', fill_value=0)
-        
-        # For better visualization, use percentile-based clipping to handle outliers
-        p1, p99 = np.percentile(heightmap, [1, 99])
-        heightmap_clipped = np.clip(heightmap, p1, p99)
-        
-        
-        # Extract scan size for proper scaling
-        scan_size_x, scan_size_y = 500, 500  # Default if parsing fails
+        scan_size_x, scan_size_y = 500, 500
         if isinstance(scan_size, str):
             parts = scan_size.split()
             if len(parts) >= 2:
@@ -364,49 +593,89 @@ def process_and_visualize_spm(file_path):
                     scan_size_y = float(parts[1])
                 except ValueError:
                     pass
+        
+        # Handle sparse/dotted data
+        unique_values = np.unique(heightmap)
+        if len(unique_values) < 1000 or np.count_nonzero(heightmap) < 0.1 * heightmap.size:
+            print("Detected sparse/dotted data, applying preprocessing...")
+            heightmap = gaussian_filter(heightmap, sigma=1.0)
+            
+            if np.count_nonzero(heightmap == 0) > 0.8 * heightmap.size:
+                print("Applying interpolation to sparse data...")
+                mask = heightmap != 0
+                coords = np.array(np.nonzero(mask)).T
+                values = heightmap[mask]
                 
-        # # Create more meaningful colormap
-        # fig, ax = plt.subplots(figsize=(10, 8))
+                xi, yi = np.mgrid[0:heightmap.shape[0], 0:heightmap.shape[1]]
+                heightmap = griddata(coords, values, (xi, yi), method='cubic', fill_value=0)
         
-        # # Use 'viridis' colormap for better detail visibility, similar to Gwyddion
-        # img = ax.imshow(heightmap_clipped, cmap='viridis', 
-        #                extent=[0, scan_size_x, 0, scan_size_y],
-        #                interpolation='none')  # Use 'none' for raw pixel display
+        # Create visualization with percentile clipping
+        p1, p99 = np.percentile(heightmap, [1, 99])
+        heightmap_clipped = np.clip(heightmap, p1, p99)
         
-        # # Add colorbar with appropriate scaling
-        # cbar = plt.colorbar(img, ax=ax, label='Height (nm)')
+        # Create Gwyddion-style visualization
+        fig, ax = plt.subplots(figsize=(10, 8))
         
-        # # Add title and labels
-        # ax.set_title(f"Surface Topography\nScan Size: {scan_size_x} × {scan_size_y} nm, Sa = {Sa:.2f} nm")
-        # ax.set_xlabel("X (nm)")
-        # ax.set_ylabel("Y (nm)")
+        img = ax.imshow(heightmap_clipped, cmap='gray', 
+                       extent=[0, scan_size_x, 0, scan_size_y],
+                       interpolation='none')
         
-        # # Save the image
-        # plt.savefig('spm_heightmap.png', dpi=300, bbox_inches='tight')
+        cbar = plt.colorbar(img, ax=ax, label='Height (nm)')
+        ax.set_title(f"Surface Topography\nScan Size: {scan_size_x} × {scan_size_y} nm\nSa = {Sa:.2f} ± {error_stats_sa['roughness_uncertainty']:.2f} nm, Ra = {Ra:.2f} ± {error_stats_ra['roughness_uncertainty']:.2f} nm")
+        ax.set_xlabel("X (nm)")
+        ax.set_ylabel("Y (nm)")
         
-        # Create a second visualization that more closely matches Gwyddion's appearance
-        _, ax2 = plt.subplots(figsize=(10, 8))
-        
-        # Use a grayscale colormap more similar to the Gwyddion example
-        img2 = ax2.imshow(heightmap_clipped, cmap='gray', 
-                        extent=[0, scan_size_x, 0, scan_size_y],
-                        interpolation='none')
-        
-        cbar2 = plt.colorbar(img2, ax=ax2, label='Height (nm)')
-        ax2.set_title(f"Surface Topography (Gwyddion Style)\nScan Size: {scan_size_x} × {scan_size_y} nm, Sa = {Sa:.2f} nm")
-        ax2.set_xlabel("X (nm)")
-        ax2.set_ylabel("Y (nm)")
-        
-        plt.savefig('spm_heightmap_gwyddion_style.png', dpi=300, bbox_inches='tight')
+        # Save main visualization
+        main_plot_filename = os.path.join(results_dir, f"{os.path.basename(base_filename)}_heightmap.png")
+        plt.savefig(main_plot_filename, dpi=300, bbox_inches='tight')
+        print(f"Main heightmap saved: {main_plot_filename}")
         plt.show()
         
-        return heightmap, metadata
+        # Save raw TIFF file
+        tiff_filename = save_raw_tiff(heightmap, file_path, metadata, results_dir)
+        
+        # Save comprehensive metadata including error statistics
+        import json
+        meta_filename = os.path.join(results_dir, f"{os.path.basename(base_filename)}_metadata.json")
+        
+        comprehensive_metadata = {
+            "original_metadata": {
+                "Scan Size": metadata.get("Scan Size", "N/A"),
+                "Samps/line": metadata.get("Samps/line", "N/A"),
+                "Lines": metadata.get("Lines", "N/A"),
+                "Z sensitivity": metadata.get("@Sens. Zsens", "N/A"),
+                "Z scale": metadata.get("@2:Z scale", "N/A"),
+            },
+            "basic_statistics": {
+                "Original min height (nm)": float(np.min(heightmap)),
+                "Original max height (nm)": float(np.max(heightmap)),
+                "Original mean height (nm)": float(np.mean(heightmap)),
+                "Sa roughness (nm)": float(Sa),
+                "Ra roughness (nm)": float(Ra)
+            },
+            "error_analysis_sa": error_stats_sa,
+            "error_analysis_ra": error_stats_ra,
+            "files_generated": {
+                "tiff_file": os.path.basename(tiff_filename),
+                "main_plot": os.path.basename(main_plot_filename),
+                "error_analysis_plot": f"{os.path.basename(base_filename)}_error_analysis.png",
+                "confidence_intervals_plot": f"{os.path.basename(base_filename)}_confidence_intervals.png"
+            }
+        }
+        
+        with open(meta_filename, 'w') as f:
+            json.dump(comprehensive_metadata, f, indent=2)
+        
+        print(f"Comprehensive metadata saved to: {meta_filename}")
+        print(f"All results saved in directory: {results_dir}")
+        
+        return heightmap, metadata, error_stats_sa, error_stats_ra
         
     except Exception as e:
         print(f"Error processing SPM file: {str(e)}")
         import traceback
         traceback.print_exc()
-        return None, None
+        return None, None, None, None
 
 # Example usage
 # if __name__ == "__main__":
@@ -418,13 +687,13 @@ def process_and_visualize_spm(file_path):
 #         spm_path = "./images/test.spm"  # Default name if not provided
         
 #     print(f"Processing SPM file: {spm_path}")
-#     # Process and visualize the SPM file
-#     heightmap, metadata = process_and_visualize_spm(spm_path)
+#     # Process and visualize the SPM file with comprehensive error analysis
+#     heightmap, metadata, error_stats_sa, error_stats_ra = process_and_visualize_spm(spm_path)
     
 #     if heightmap is not None:
-#         # Print basic statistics about the heightmap
 #         print(f"\nSuccessfully processed {spm_path}")
 #         print(f"Image dimensions: {heightmap.shape[1]} x {heightmap.shape[0]} pixels")
 #         print(f"Height range: {np.min(heightmap):.3f} to {np.max(heightmap):.3f} nm")
-#         print(f"Average roughness (Sa): {calculate_sa(heightmap):.3f} nm")
-#         save_raw_tiff(heightmap, spm_path, metadata)
+#         print(f"Sa roughness: {calculate_sa(heightmap):.3f} ± {error_stats_sa['roughness_uncertainty']:.3f} nm")
+#         print(f"Ra roughness: {calculate_ra(heightmap):.3f} ± {error_stats_ra['roughness_uncertainty']:.3f} nm")
+#         print("Check the 'results' folder for all generated files and analysis plots.")
